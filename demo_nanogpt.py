@@ -13,6 +13,7 @@ import os
 import pickle
 from contextlib import nullcontext
 import argparse
+import dataclasses
 import time
 import importlib
 
@@ -161,7 +162,14 @@ def create_train_state(cfg, device):
         init_var = cfg.init_var,
         use_flash = cfg.use_flash
     )
-    
+
+    # Pass additional architecture-specific config fields (e.g. for split LLaMA)
+    base_fields = {'context_len', 'vocab_size', 'num_layers', 'num_heads',
+                   'embd_dim', 'bias', 'init_var', 'use_flash'}
+    for field in dataclasses.fields(gpt_conf):
+        if field.name not in base_fields and hasattr(cfg, field.name):
+            setattr(gpt_conf, field.name, getattr(cfg, field.name))
+
     model = GPT(gpt_conf)
     
     if cfg.verbose and cfg.master_process:
@@ -424,6 +432,12 @@ parser.add_argument('--bias', type = str, default = 'False')
 parser.add_argument('--context_len', type = int, default = 1024)
 parser.add_argument('--compile', type = lambda x: x.lower() == 'true', default = True)
 parser.add_argument('--use_flash', type = lambda x: x.lower() == 'true', default = True)
+# split llama specific
+parser.add_argument('--path_8b', type = str, default = '')
+parser.add_argument('--path_70b', type = str, default = '')
+parser.add_argument('--num_layers_8b', type = int, default = 4)
+parser.add_argument('--num_layers_70b', type = int, default = 4)
+parser.add_argument('--use_mlp_adapter', type = lambda x: x.lower() == 'true', default = False)
 
 ### optimization
 # adamw optimizer
