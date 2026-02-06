@@ -7,9 +7,12 @@ smaller LLaMA model (e.g., 8B) with late layers from a larger LLaMA model
 
 Usage:
     python demo_nanogpt.py --abc llama_split \
-        --path_8b /path/to/llama-8b \
-        --path_70b /path/to/llama-70b \
+        --path_8b /path/to/checkpoint_8b \
+        --path_70b /path/to/checkpoint_70b \
         --num_layers_8b 4 --num_layers_70b 4
+
+The path_8b and path_70b arguments should point to directories containing
+config.json (HuggingFace LlamaConfig format), or HuggingFace model IDs.
 """
 
 import math
@@ -32,6 +35,7 @@ class GPTConfig:
     use_flash: bool = False
 
     # Split LLaMA specific fields
+    # Paths to directories with config.json or HuggingFace model IDs
     path_8b: str = ""
     path_70b: str = ""
     num_layers_8b: int = 4
