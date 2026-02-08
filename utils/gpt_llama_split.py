@@ -15,7 +15,6 @@ The path_8b and path_70b arguments should point to directories containing
 config.json (HuggingFace LlamaConfig format), or HuggingFace model IDs.
 """
 
-import math
 from dataclasses import dataclass
 
 import torch
@@ -56,6 +55,13 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
 
+        if not config.path_8b or not config.path_70b:
+            raise ValueError(
+                "Both --path_8b and --path_70b must be provided. "
+                "Each should point to a directory containing config.json "
+                "(HuggingFace LlamaConfig format)."
+            )
+
         from transformers import LlamaConfig
         from transformers.models.llama.modeling_llama import (
             LlamaDecoderLayer,
@@ -67,7 +73,7 @@ class GPT(nn.Module):
         config_8b = LlamaConfig.from_pretrained(config.path_8b)
         config_70b = LlamaConfig.from_pretrained(config.path_70b)
 
-        attn_impl = "flash_attention_2" if config.use_flash else "eager"
+        attn_impl = "flash_attention_2" if config.use_flash else "sdpa"
         config_8b._attn_implementation = attn_impl
         config_70b._attn_implementation = attn_impl
 
