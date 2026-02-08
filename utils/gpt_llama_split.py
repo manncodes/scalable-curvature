@@ -7,14 +7,16 @@ smaller LLaMA model (e.g., 8B) with late layers from a larger LLaMA model
 
 Usage:
     python demo_nanogpt.py --abc llama_split \
-        --path_8b /path/to/checkpoint_8b \
-        --path_70b /path/to/checkpoint_70b \
-        --num_layers_8b 4 --num_layers_70b 4
+        --model_path /path/to/checkpoint_dir
 
-The path_8b and path_70b arguments should point to directories containing
-config.json (HuggingFace LlamaConfig format), or HuggingFace model IDs.
+The checkpoint directory must contain a config.json with fields:
+    path8b, path70b, num_layers_8, num_layers_70, mlp, vocab_size, etc.
+The path8b/path70b directories must each contain their own config.json
+(HuggingFace LlamaConfig format).
 """
 
+import json
+import os
 from dataclasses import dataclass
 
 import torch
@@ -33,13 +35,8 @@ class GPTConfig:
     init_var: float = 1.0
     use_flash: bool = False
 
-    # Split LLaMA specific fields
-    # Paths to directories with config.json or HuggingFace model IDs
-    path_8b: str = ""
-    path_70b: str = ""
-    num_layers_8b: int = 4
-    num_layers_70b: int = 4
-    use_mlp_adapter: bool = False
+    # Path to checkpoint directory containing config.json
+    model_path: str = ""
 
 
 class GPT(nn.Module):
@@ -48,6 +45,7 @@ class GPT(nn.Module):
     with late layers from a large model (e.g. 70B), connected via a learned
     adapter that bridges the hidden dimensions.
 
+    All architecture parameters are read from config.json in model_path.
     The forward interface matches the framework convention: forward(idx) -> logits
     """
 
@@ -55,12 +53,32 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
 
-        if not config.path_8b or not config.path_70b:
+        if not config.model_path:
             raise ValueError(
-                "Both --path_8b and --path_70b must be provided. "
-                "Each should point to a directory containing config.json "
-                "(HuggingFace LlamaConfig format)."
+                "--model_path must be provided, pointing to a directory "
+                "containing config.json with split LLaMA configuration."
             )
+
+        # Read the model's config.json
+        config_json_path = os.path.join(config.model_path, "config.json")
+        with open(config_json_path) as f:
+            model_cfg = json.load(f)
+
+        # Extract split-llama fields from config.json
+        path_8b = model_cfg["path8b"]
+        path_70b = model_cfg["path70b"]
+        num_layers_8b = model_cfg["num_layers_8"]
+        num_layers_70b = model_cfg["num_layers_70"]
+        use_mlp_adapter = model_cfg.get("mlp", False)
+
+        # Update GPTConfig fields from config.json so the framework
+        # (filenames, logging) reflects the actual model configuration
+        config.vocab_size = model_cfg["vocab_size"]
+        config.num_layers = num_layers_8b + num_layers_70b
+        config.embd_dim = model_cfg["hidden_size"]
+        config.num_heads = model_cfg["num_attention_heads"]
+
+        self._use_mlp_adapter = use_mlp_adapter
 
         from transformers import LlamaConfig
         from transformers.models.llama.modeling_llama import (
@@ -70,8 +88,8 @@ class GPT(nn.Module):
         )
 
         # Load HF configs for the two model sizes
-        config_8b = LlamaConfig.from_pretrained(config.path_8b)
-        config_70b = LlamaConfig.from_pretrained(config.path_70b)
+        config_8b = LlamaConfig.from_pretrained(path_8b)
+        config_70b = LlamaConfig.from_pretrained(path_70b)
 
         attn_impl = "flash_attention_2" if config.use_flash else "sdpa"
         config_8b._attn_implementation = attn_impl
@@ -91,12 +109,12 @@ class GPT(nn.Module):
         self.layers_first = nn.ModuleList(
             [
                 LlamaDecoderLayer(config_8b, layer_idx=i)
-                for i in range(config.num_layers_8b)
+                for i in range(num_layers_8b)
             ]
         )
 
         # Adapter to bridge hidden dimensions (8B -> 70B)
-        if config.use_mlp_adapter:
+        if use_mlp_adapter:
             self.adapter_linear_1 = nn.Linear(
                 config_8b.hidden_size, config_70b.hidden_size, bias=False
             )
@@ -109,11 +127,11 @@ class GPT(nn.Module):
             )
 
         # Last set of layers (from 70B config, using the final N layers)
-        start_idx_70b = config_70b.num_hidden_layers - config.num_layers_70b
+        start_idx_70b = config_70b.num_hidden_layers - num_layers_70b
         self.layers_last = nn.ModuleList(
             [
                 LlamaDecoderLayer(config_70b, layer_idx=start_idx_70b + i)
-                for i in range(config.num_layers_70b)
+                for i in range(num_layers_70b)
             ]
         )
 
@@ -167,7 +185,7 @@ class GPT(nn.Module):
             hidden_states = layer_output[0]
 
         # Adapter: bridge 8B hidden dim -> 70B hidden dim
-        if self.config.use_mlp_adapter:
+        if self._use_mlp_adapter:
             hidden_states = torch.relu(self.adapter_linear_1(hidden_states))
             hidden_states = self.adapter_linear_2(hidden_states)
         else:

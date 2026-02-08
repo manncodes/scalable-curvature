@@ -171,7 +171,12 @@ def create_train_state(cfg, device):
             setattr(gpt_conf, field.name, getattr(cfg, field.name))
 
     model = GPT(gpt_conf)
-    
+
+    # Propagate any config values updated by the model (e.g. from config.json)
+    # back to cfg so filenames and logging reflect the actual architecture
+    for field_name in ('vocab_size', 'num_layers', 'num_heads', 'embd_dim'):
+        setattr(cfg, field_name, getattr(gpt_conf, field_name))
+
     if cfg.verbose and cfg.master_process:
         for name, param in model.named_parameters():
             mean = param.mean().item()
@@ -206,6 +211,11 @@ def train_and_evaluate(cfg, device):
     ### TRAIN STATE ###
     # create the model, loss function and optimizer
     model, loss_fn, optim = create_train_state(cfg, device)
+
+    # Recompute paths with potentially updated config values (e.g. from model's config.json)
+    base_filename = get_base_filename(cfg, cfg.num_steps)
+    cfg.train_path = os.path.join(cfg.results_dir, f'train_{base_filename}.csv')
+    cfg.evals_path = os.path.join(cfg.results_dir, f'eval_{base_filename}.csv')
 
     num_params, embd_params = model.get_num_params()
     if cfg.master_process:
@@ -432,12 +442,8 @@ parser.add_argument('--bias', type = str, default = 'False')
 parser.add_argument('--context_len', type = int, default = 1024)
 parser.add_argument('--compile', type = lambda x: x.lower() == 'true', default = True)
 parser.add_argument('--use_flash', type = lambda x: x.lower() == 'true', default = True)
-# split llama specific
-parser.add_argument('--path_8b', type = str, default = '')
-parser.add_argument('--path_70b', type = str, default = '')
-parser.add_argument('--num_layers_8b', type = int, default = 4)
-parser.add_argument('--num_layers_70b', type = int, default = 4)
-parser.add_argument('--use_mlp_adapter', type = lambda x: x.lower() == 'true', default = False)
+# model checkpoint path (for architectures that read config from config.json)
+parser.add_argument('--model_path', type = str, default = '')
 
 ### optimization
 # adamw optimizer
