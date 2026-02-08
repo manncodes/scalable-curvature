@@ -1,6 +1,9 @@
 results
 wandb
+# Data files (keep prepare.py scripts)
 data/*
+!data/*/
+!data/**/prepare.py
 checkpoints
 output/
 configs/beaker_configs/auto_created
